@@ -1,0 +1,45 @@
+image: atlassian/default-image:2
+
+options:
+  docker: true
+
+pipelines:
+  default:
+    - step:
+        name: Build and Push Docker Image
+        services:
+          - docker
+        script:
+          - pipe: atlassian/aws-cli-run:1.3.0
+            variables:
+              AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+              AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+              AWS_DEFAULT_REGION: $AWS_REGION
+              COMMAND: "ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+
+          # Build the Docker image
+          - docker build -t php-app .
+
+          # Tag the image for ECR
+          - docker tag php-app:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/php-app:latest
+
+          # Push the image to ECR
+          - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/php-app:latest
+
+    - step:
+        name: Deploy Terraform Infrastructure
+        script:
+          # Install Terraform
+          - apt-get update && apt-get install -y unzip
+          - curl -fsSL https://releases.hashicorp.com/terraform/1.5.6/terraform_1.5.6_linux_amd64.zip -o terraform.zip
+          - unzip terraform.zip && mv terraform /usr/local/bin/
+
+          # Initialize Terraform
+          - cd ecs-terraform/module
+          - terraform init
+
+          # Validate Terraform configuration
+          - terraform validate
+
+          # Plan the Terraform deployment
+          - terraform plan -var-file=dev.tfvars -var "container_image=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/php-app:latest"
